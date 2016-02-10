@@ -1,0 +1,673 @@
+---
+title: "CEPM WJ Energy Index Transformation"
+author: "Tom Lombardi"
+date: "February 9, 2016"
+output: html_document
+---
+
+#W&J Energy Index Database Construction
+This website documents the methods for building the CEPM database that 
+tracks the W&J Energy Index for the Center fo Energy Policy and Management.
+The RK Mellon Grant supported this work.
+
+##Understanding the Data
+Drs. Leslie and Robert Dunn developed the W&J Energy Index to help 
+economists understand the dependence of the United States on foreign 
+sources of energy. The researchers prepare their data in two 
+spreadsheets representing the National and Regional/State level index values, 
+weights and components. Spreadsheets are extremely convenient for ad hoc 
+analysis of data sets, but pose problems when presented on the world wide 
+web. The R code documented below transforms the spreadsheet data into a set 
+of SQL statements for the MySQL environment.
+
+##Entity-Relationship Diagram
+
+##DDL for Base Tables
+
+##Transformations for Measurements
+###Required Packages
+The code below requires the installation of two packages.
+```
+install.packages("XLConnect")
+install.packages("reshape2")
+```
+`XLConnect` provides easy access to the data in Excel spreadsheets.
+`reshape2` offers methods for reshaping data into useful formats
+
+###Processing the National-level Data
+The code below connects to the `National.xlsx` spreadsheet to process
+the national-level indices. After the entire workbook is loaded, five 
+different sheets are stored in data frames.
+```{r}
+library("XLConnect")
+wb <- loadWorkbook("national.xlsx")
+i1 <- readWorksheet(wb, sheet=1)
+i2 <- readWorksheet(wb, sheet=2)
+w <- readWorksheet(wb, sheet=3, startRow=2)
+ps <- readWorksheet(wb, sheet=4, startRow=2)
+pse <- readWorksheet(wb, sheet=5,startRow=2)
+```
+
+###Processing Sheet 1
+Sheet 1 contains the W&J Energy Index values.
+The code below performs the following steps.
+
+* Adds columns to the data frame to store the region, source and component codes
+required by the database.
+
+* Reorganizes and renames the columns to match the database design.
+
+* Loops over each row in the data frame to produce the required SQL insert
+statements.
+
+* Writing the data to a file called `export_index1.sql`.
+
+```{r}
+i1$reg_id <- 1  
+i1$src_id <- 12 
+i1$comp_id <- 1 
+
+expi1 <- data.frame(cbind(i1$Year,i1$reg_id,i1$src_id,i1$comp_id,i1$W.J.Energy.Index))
+names(expi1) <- c('year_id','reg_id','src_id','comp_id','measurement')
+
+text <- NULL
+for(i in 1:nrow(expi1)){
+  text <- paste(text, "insert into tbl_values values (",
+                expi1[i,1],",",
+                expi1[i,2],",",
+                expi1[i,3],",",
+                expi1[i,4],",",
+                expi1[i,5],");\n",sep="")
+}
+fileConn<-file("export_index1.sql")
+writeLines(text, fileConn)
+close(fileConn)
+```
+
+###Processing Sheet 2
+The steps for processing Sheet 2 are the same as those for Sheet 1.
+```{r}
+text <- NULL
+i2$reg_id <- 1  
+i2$src_id <- 12
+i2$comp_id <- 2
+
+expi2 <- data.frame(cbind(i2$Year,i2$reg_id,i2$src_id,i2$comp_id,
+         i2$W.J.Energy.Index..with.consideration.of.exports.))
+names(expi2) <- c('year_id','reg_id','src_id','comp_id','measurement')
+
+text <- NULL
+for(i in 1:nrow(expi2)){
+  text <- paste(text, "insert into tbl_values values (",
+                expi2[i,1],",",
+                expi2[i,2],",",
+                expi2[i,3],",",
+                expi2[i,4],",",
+                expi2[i,5],");\n",sep="")
+}
+fileConn<-file("export_index2.sql")
+writeLines(text, fileConn)
+close(fileConn)
+```
+
+###Processing Sheet 3
+Sheets 3, 4 and 5 have a more complex structure than previously discussed 
+Sheets. These data are organized in a wide format and we must reorganize them
+into a long format. The `reshape2` package makes this straight-forward.
+
+* Load the `reshape2` package.
+
+* Use `melt()` to convert the format of the data from a wide to a long format.
+
+* Add additional columns for region, component and source data.
+
+* Set the value of the src_id to the appropriate key value in the database.
+
+* Reorganize and rename data frame to match the database design.
+
+* Loop over the data frame to construct the necessary SQL insert statements.
+
+* Write the SQL to a file called `export_weights.sql`
+
+```{r}
+library(reshape2)
+ww <- melt(w,id.vars="Year")
+ww$reg_id <- 1
+ww$comp_id <- 3 
+ww$src_id <- 1
+ww[ww$variable=="Natural.Gas",]$src_id <- 2
+ww[ww$variable=="Petroleum",]$src_id <- 3
+ww[ww$variable=="Nuclear",]$src_id <- 4
+ww[ww$variable=="Hydro",]$src_id <- 5
+ww[ww$variable=="Geothermal",]$src_id <- 6
+ww[ww$variable=="Solar.PV",]$src_id <- 7
+ww[ww$variable=="Wind",]$src_id <- 8
+ww[ww$variable=="Wood.Waste",]$src_id <- 9
+ww[ww$variable=="Fuel.Ethanol",]$src_id <- 10
+ww[ww$variable=="Biodiesel",]$src_id <- 11
+
+expw <- data.frame(cbind(ww$Year,ww$reg_id,ww$src_id,ww$comp_id,ww$value))
+names(expw) <- c('year_id','reg_id','src_id','comp_id','measurement')
+
+text <- NULL
+for(i in 1:nrow(expw)){
+  text <- paste(text, "insert into tbl_values values (",
+                expw[i,1],",",
+                expw[i,2],",",
+                expw[i,3],",",
+                expw[i,4],",",
+                expw[i,5],");\n",sep="")
+}
+fileConn<-file("export_weights.sql")
+writeLines(text, fileConn)
+close(fileConn)
+```
+
+###Comparing wide and long format data
+**Wide Format:Before**
+```{r}
+head(w)
+```
+**Long Format:After**
+```{r}
+head(ww)
+```
+
+###Process Sheet 4
+```{r}
+psexp <- melt(ps,id.vars="Year")
+psexp$reg_id <- 1 
+psexp$comp_id <- 4 
+psexp$src_id <- 1
+psexp[psexp$variable=="Natural.Gas",]$src_id <- 2
+psexp[psexp$variable=="Petroleum",]$src_id <- 3
+psexp[psexp$variable=="Nuclear",]$src_id <- 4
+psexp[psexp$variable=="Hydro",]$src_id <- 5
+psexp[psexp$variable=="Geothermal",]$src_id <- 6
+psexp[psexp$variable=="Solar.PV",]$src_id <- 7
+psexp[psexp$variable=="Wind",]$src_id <- 8
+psexp[psexp$variable=="Wood.Waste",]$src_id <- 9
+psexp[psexp$variable=="Fuel.Ethanol",]$src_id <- 10
+psexp[psexp$variable=="Biodiesel",]$src_id <- 11
+
+expps <- data.frame(cbind(psexp$Year,psexp$reg_id,psexp$src_id,psexp$comp_id,psexp$value))
+names(expps) <- c('year_id','reg_id','src_id','comp_id','measurement')
+
+text <- NULL
+for(i in 1:nrow(expps)){
+  text <- paste(text, "insert into tbl_values values (",
+                expps[i,1],",",
+                expps[i,2],",",
+                expps[i,3],",",
+                expps[i,4],",",
+                expps[i,5],");\n",sep="")
+}
+fileConn<-file("export_index1_sources.sql")
+writeLines(text, fileConn)
+close(fileConn)
+```
+###Process Sheet 5
+```{r}
+pseexp <- melt(pse,id.vars="Year")
+pseexp$reg_id <- 1 
+pseexp$comp_id <- 5 
+
+pseexp$src_id <- 1
+pseexp[pseexp$variable=="Natural.Gas",]$src_id <- 2
+pseexp[pseexp$variable=="Petroleum",]$src_id <- 3
+pseexp[pseexp$variable=="Nuclear",]$src_id <- 4
+pseexp[pseexp$variable=="Hydro",]$src_id <- 5
+pseexp[pseexp$variable=="Geothermal",]$src_id <- 6
+pseexp[pseexp$variable=="Solar.PV",]$src_id <- 7
+pseexp[pseexp$variable=="Wind",]$src_id <- 8
+pseexp[pseexp$variable=="Wood.Waste",]$src_id <- 9
+pseexp[pseexp$variable=="Fuel.Ethanol",]$src_id <- 10
+pseexp[pseexp$variable=="Biodiesel",]$src_id <- 11
+
+exppse <- data.frame(cbind(pseexp$Year,pseexp$reg_id,pseexp$src_id,pseexp$comp_id,pseexp$value))
+names(exppse) <- c('year_id','reg_id','src_id','comp_id','measurement')
+
+text <- NULL
+for(i in 1:nrow(exppse)){
+  text <- paste(text, "insert into tbl_values values (",
+                exppse[i,1],",",
+                exppse[i,2],",",
+                exppse[i,3],",",
+                exppse[i,4],",",
+                exppse[i,5],");\n",sep="")
+}
+fileConn<-file("export_index2_sources.sql")
+writeLines(text, fileConn)
+close(fileConn)
+
+```
+
+###Processing Regional and State Data
+The regional- and state-leve data only include index1 data.
+
+```{r}
+wb <- loadWorkbook("regional.xlsx")
+i1 <- readWorksheet(wb, sheet=1, startRow=2)
+cmix <- readWorksheet(wb, sheet=2, startRow=2)
+c <- readWorksheet(wb, sheet=3, startRow=2)
+ngmix <- readWorksheet(wb, sheet=4, startRow=2)
+ng <- readWorksheet(wb, sheet=5,startRow=2)
+pmix <- readWorksheet(wb, sheet=6, startRow=2)
+p <- readWorksheet(wb, sheet=7, startRow=2)
+#No mix data required. All 100% sourced at location.
+nmix <- readWorksheet(wb, sheet=8, startRow=2)
+hmix <- readWorksheet(wb, sheet=9, startRow=2)
+gmix <- readWorksheet(wb, sheet=10, startRow=2)
+smix <- readWorksheet(wb, sheet=11, startRow=2)
+wmix <- readWorksheet(wb, sheet=12, startRow=2)
+wbiomix <- readWorksheet(wb, sheet=13, startRow=2)
+
+femix <- readWorksheet(wb, sheet=14, startRow=2)
+fe <- readWorksheet(wb, sheet=15, startRow=2)
+
+```
+
+###Processing Sheet 1
+```{r}
+myseq <- seq(from=2, to=55, by=1)
+names(i1) <- c('year',myseq)
+ei1 <- melt(i1, id.vars="year")
+ei1$variable <- as.character(ei1$variable)
+ei1$comp_id <- 1
+ei1$src_id <- 12
+
+expi1 <- data.frame(cbind(ei1$year,ei1$variable,ei1$src_id,ei1$comp_id,ei1$value))
+names(expi1) <- c('year_id','reg_id','src_id','comp_id','measurement')
+
+text <- NULL
+for(i in 1:nrow(expi1)){
+  text <- paste(text, "insert into tbl_values values (",
+                expi1[i,1],",",
+                expi1[i,2],",",
+                expi1[i,3],",",
+                expi1[i,4],",",
+                expi1[i,5],");\n",sep="")
+}
+fileConn<-file("export_regions_index1.sql")
+writeLines(text, fileConn)
+close(fileConn)
+```
+
+###Processing Sheet 2
+Source = 1 (Coal)
+Component = 3 (Share of Energy Mix)
+```{r}
+names(cmix) <- c('year',myseq)
+cmix1 <- melt(cmix, id.vars="year")
+cmix1$variable <- as.character(cmix1$variable)
+cmix1$comp_id <- 3
+cmix1$src_id <- 1
+
+cmix1 <- data.frame(cbind(cmix1$year,cmix1$variable,cmix1$src_id,cmix1$comp_id,cmix1$value))
+names(cmix1) <- c('year_id','reg_id','src_id','comp_id','measurement')
+
+text <- NULL
+for(i in 1:nrow(cmix1)){
+  text <- paste(text, "insert into tbl_values values (",
+                cmix1[i,1],",",
+                cmix1[i,2],",",
+                cmix1[i,3],",",
+                cmix1[i,4],",",
+                cmix1[i,5],");\n",sep="")
+}
+fileConn<-file("export_regions_coal_mix.sql")
+writeLines(text, fileConn)
+close(fileConn)
+```
+
+###Processing Sheet 3
+Source = 1 (Coal)
+Component = 4 (percent sourced)
+```{r}
+names(c) <- c('year',myseq)
+c1 <- melt(c, id.vars="year")
+c1$variable <- as.character(c1$variable)
+c1$comp_id <- 4
+c1$src_id <- 1
+
+c1 <- data.frame(cbind(c1$year,c1$variable,c1$src_id,c1$comp_id,c1$value))
+names(c1) <- c('year_id','reg_id','src_id','comp_id','measurement')
+
+text <- NULL
+for(i in 1:nrow(c1)){
+  text <- paste(text, "insert into tbl_values values (",
+                c1[i,1],",",
+                c1[i,2],",",
+                c1[i,3],",",
+                c1[i,4],",",
+                c1[i,5],");\n",sep="")
+}
+fileConn<-file("export_regions_coal.sql")
+writeLines(text, fileConn)
+close(fileConn)
+```
+
+###Processing Sheet 4
+Source = 2 (Natural Gas)
+Component = 3 (Share of Energy Mix)
+```{r}
+names(ngmix) <- c('year',myseq)
+ngmix1 <- melt(ngmix, id.vars="year")
+ngmix1$variable <- as.character(ngmix1$variable)
+ngmix1$comp_id <- 3
+ngmix1$src_id <- 2
+
+ngmix1 <- data.frame(cbind(ngmix1$year,ngmix1$variable,ngmix1$src_id,ngmix1$comp_id,ngmix1$value))
+names(ngmix1) <- c('year_id','reg_id','src_id','comp_id','measurement')
+
+text <- NULL
+for(i in 1:nrow(ngmix1)){
+  text <- paste(text, "insert into tbl_values values (",
+                ngmix1[i,1],",",
+                ngmix1[i,2],",",
+                ngmix1[i,3],",",
+                ngmix1[i,4],",",
+                ngmix1[i,5],");\n",sep="")
+}
+fileConn<-file("export_regions_natural_gas_mix.sql")
+writeLines(text, fileConn)
+close(fileConn)
+```
+###Processing Sheet 5
+Source = 2 (Natural Gas)
+Component = 4 (percent sourced)
+```{r}
+names(ng) <- c('year',myseq)
+ng1 <- melt(ng, id.vars="year")
+ng1$variable <- as.character(ng1$variable)
+ng1$comp_id <- 4
+ng1$src_id <- 2
+
+ng1 <- data.frame(cbind(ng1$year,ng1$variable,ng1$src_id,ng1$comp_id,ng1$value))
+names(ng1) <- c('year_id','reg_id','src_id','comp_id','measurement')
+
+text <- NULL
+for(i in 1:nrow(ng1)){
+  text <- paste(text, "insert into tbl_values values (",
+                ng1[i,1],",",
+                ng1[i,2],",",
+                ng1[i,3],",",
+                ng1[i,4],",",
+                ng1[i,5],");\n",sep="")
+}
+fileConn<-file("export_regions_natural_gas.sql")
+writeLines(text, fileConn)
+close(fileConn)
+```
+
+###Processing Sheet 6
+Source = 3 (Petroleum)
+Component = 3 (Share of Energy Mix)
+```{r}
+names(pmix) <- c('year',myseq)
+pmix1 <- melt(pmix, id.vars="year")
+pmix1$variable <- as.character(pmix1$variable)
+pmix1$comp_id <- 3
+pmix1$src_id <- 3
+
+pmix1 <-data.frame(cbind(pmix1$year,pmix1$variable,pmix1$src_id,pmix1$comp_id,pmix1$value))
+names(pmix1) <- c('year_id','reg_id','src_id','comp_id','measurement')
+
+text <- NULL
+for(i in 1:nrow(pmix1)){
+  text <- paste(text, "insert into tbl_values values (",
+                pmix1[i,1],",",
+                pmix1[i,2],",",
+                pmix1[i,3],",",
+                pmix1[i,4],",",
+                pmix1[i,5],");\n",sep="")
+}
+fileConn<-file("export_regions_petroleum_mix.sql")
+writeLines(text, fileConn)
+close(fileConn)
+```
+
+###Processing Sheet 7
+Source = 3 (Petroleum)
+Component = 4 (percent sourced)
+```{r}
+names(p) <- c('year',myseq)
+p1 <- melt(p, id.vars="year")
+p1$variable <- as.character(p1$variable)
+p1$comp_id <- 4
+p1$src_id <- 3
+
+p1 <- data.frame(cbind(p1$year,p1$variable,p1$src_id,p1$comp_id,p1$value))
+names(p1) <- c('year_id','reg_id','src_id','comp_id','measurement')
+
+text <- NULL
+for(i in 1:nrow(p1)){
+  text <- paste(text, "insert into tbl_values values (",
+                p1[i,1],",",
+                p1[i,2],",",
+                p1[i,3],",",
+                p1[i,4],",",
+                p1[i,5],");\n",sep="")
+}
+fileConn<-file("export_regions_petroleum.sql")
+writeLines(text, fileConn)
+close(fileConn)
+```
+
+###Processing Sheet 8
+Sheets 8 - 13 only have mix information. In other words, these data 
+are all 100% sourced domestically.
+Source = 4 (Nuclear)
+Component = 3 (Share of Energy Mix)
+```{r}
+names(nmix) <- c('year',myseq)
+nmix1 <- melt(nmix, id.vars="year")
+nmix1$variable <- as.character(nmix1$variable)
+nmix1$comp_id <- 3
+nmix1$src_id <- 4
+
+nmix1 <-data.frame(cbind(nmix1$year,nmix1$variable,nmix1$src_id,nmix1$comp_id,nmix1$value))
+names(nmix1) <- c('year_id','reg_id','src_id','comp_id','measurement')
+
+text <- NULL
+for(i in 1:nrow(nmix1)){
+  text <- paste(text, "insert into tbl_values values (",
+                nmix1[i,1],",",
+                nmix1[i,2],",",
+                nmix1[i,3],",",
+                nmix1[i,4],",",
+                nmix1[i,5],");\n",sep="")
+}
+fileConn<-file("export_regions_nuclear_mix.sql")
+writeLines(text, fileConn)
+close(fileConn)
+```
+
+###Processing Sheet 9
+Source = 5 (Hydro)
+Component = 3 (Share of Energy Mix)
+```{r}
+names(hmix) <- c('year',myseq)
+hmix1 <- melt(hmix, id.vars="year")
+hmix1$variable <- as.character(hmix1$variable)
+hmix1$comp_id <- 3
+hmix1$src_id <- 5
+
+hmix1 <-data.frame(cbind(hmix1$year,hmix1$variable,hmix1$src_id,hmix1$comp_id,hmix1$value))
+names(hmix1) <- c('year_id','reg_id','src_id','comp_id','measurement')
+
+text <- NULL
+for(i in 1:nrow(hmix1)){
+  text <- paste(text, "insert into tbl_values values (",
+                hmix1[i,1],",",
+                hmix1[i,2],",",
+                hmix1[i,3],",",
+                hmix1[i,4],",",
+                hmix1[i,5],");\n",sep="")
+}
+fileConn<-file("export_regions_hydro_mix.sql")
+writeLines(text, fileConn)
+close(fileConn)
+```
+
+###Processing Sheet 10
+Source = 6 (Geothermal)
+Component = 3 (Share of Energy Mix)
+```{r}
+names(gmix) <- c('year',myseq)
+gmix1 <- melt(gmix, id.vars="year")
+gmix1$variable <- as.character(gmix1$variable)
+gmix1$comp_id <- 3
+gmix1$src_id <- 6
+
+gmix1 <-data.frame(cbind(gmix1$year,gmix1$variable,gmix1$src_id,gmix1$comp_id,gmix1$value))
+names(gmix1) <- c('year_id','reg_id','src_id','comp_id','measurement')
+
+text <- NULL
+for(i in 1:nrow(gmix1)){
+  text <- paste(text, "insert into tbl_values values (",
+                gmix1[i,1],",",
+                gmix1[i,2],",",
+                gmix1[i,3],",",
+                gmix1[i,4],",",
+                gmix1[i,5],");\n",sep="")
+}
+fileConn<-file("export_regions_geothermal_mix.sql")
+writeLines(text, fileConn)
+close(fileConn)
+```
+
+###Processing Sheet 11
+Source = 7 (Solar/PV)
+Component = 3 (Share of Energy Mix)
+```{r}
+names(smix) <- c('year',myseq)
+smix1 <- melt(smix, id.vars="year")
+smix1$variable <- as.character(smix1$variable)
+smix1$comp_id <- 3
+smix1$src_id <- 7
+
+smix1 <-data.frame(cbind(smix1$year,smix1$variable,smix1$src_id,smix1$comp_id,smix1$value))
+names(smix1) <- c('year_id','reg_id','src_id','comp_id','measurement')
+
+text <- NULL
+for(i in 1:nrow(smix1)){
+  text <- paste(text, "insert into tbl_values values (",
+                smix1[i,1],",",
+                smix1[i,2],",",
+                smix1[i,3],",",
+                smix1[i,4],",",
+                smix1[i,5],");\n",sep="")
+}
+fileConn<-file("export_regions_solarpv_mix.sql")
+writeLines(text, fileConn)
+close(fileConn)
+```
+
+###Processing Sheet 12
+Source = 8 (Wind)
+Component = 3 (Share of Energy Mix)
+```{r}
+names(wmix) <- c('year',myseq)
+wmix1 <- melt(wmix, id.vars="year")
+wmix1$variable <- as.character(wmix1$variable)
+wmix1$comp_id <- 3
+wmix1$src_id <- 8
+
+wmix1 <-data.frame(cbind(wmix1$year,wmix1$variable,wmix1$src_id,wmix1$comp_id,wmix1$value))
+names(wmix1) <- c('year_id','reg_id','src_id','comp_id','measurement')
+
+text <- NULL
+for(i in 1:nrow(wmix1)){
+  text <- paste(text, "insert into tbl_values values (",
+                wmix1[i,1],",",
+                wmix1[i,2],",",
+                wmix1[i,3],",",
+                wmix1[i,4],",",
+                wmix1[i,5],");\n",sep="")
+}
+fileConn<-file("export_regions_wind_mix.sql")
+writeLines(text, fileConn)
+close(fileConn)
+```
+
+###Processing Sheet 13
+Source = 9 (Wood/Waste)
+Component = 3 (Share of Energy Mix)
+```{r}
+names(wbiomix) <- c('year',myseq)
+wbiomix1 <- melt(wbiomix, id.vars="year")
+wbiomix1$variable <- as.character(wbiomix1$variable)
+wbiomix1$comp_id <- 3
+wbiomix1$src_id <- 9
+
+wbiomix1 <-data.frame(cbind(wbiomix1$year,wbiomix1$variable,wbiomix1$src_id,wbiomix1$comp_id,wbiomix1$value))
+names(wbiomix1) <- c('year_id','reg_id','src_id','comp_id','measurement')
+
+text <- NULL
+for(i in 1:nrow(wbiomix1)){
+  text <- paste(text, "insert into tbl_values values (",
+                wbiomix1[i,1],",",
+                wbiomix1[i,2],",",
+                wbiomix1[i,3],",",
+                wbiomix1[i,4],",",
+                wbiomix1[i,5],");\n",sep="")
+}
+fileConn<-file("export_regions_wood_bio_mix.sql")
+writeLines(text, fileConn)
+close(fileConn)
+```
+
+###Processing Sheet 14
+Source = 10 (Fuel Ethanol)
+Component = 3 (Share of Energy Mix)
+```{r}
+names(femix) <- c('year',myseq)
+femix1 <- melt(femix, id.vars="year")
+femix1$variable <- as.character(femix1$variable)
+femix1$comp_id <- 3
+femix1$src_id <- 10
+
+femix1 <-data.frame(cbind(femix1$year,femix1$variable,femix1$src_id,femix1$comp_id,femix1$value))
+names(femix1) <- c('year_id','reg_id','src_id','comp_id','measurement')
+
+text <- NULL
+for(i in 1:nrow(femix1)){
+  text <- paste(text, "insert into tbl_values values (",
+                femix1[i,1],",",
+                femix1[i,2],",",
+                femix1[i,3],",",
+                femix1[i,4],",",
+                femix1[i,5],");\n",sep="")
+}
+fileConn<-file("export_regions_fuel_ethanol_mix.sql")
+writeLines(text, fileConn)
+close(fileConn)
+```
+
+###Processing Sheet 15
+Source = 10 (Fuel Ethanol)
+Component = 4 (Share of Energy Mix)
+```{r}
+names(fe) <- c('year',myseq)
+fe1 <- melt(fe, id.vars="year")
+fe1$variable <- as.character(fe1$variable)
+fe1$comp_id <- 4
+fe1$src_id <- 10
+
+fe1 <-data.frame(cbind(fe1$year,fe1$variable,fe1$src_id,fe1$comp_id,fe1$value))
+names(fe1) <- c('year_id','reg_id','src_id','comp_id','measurement')
+
+text <- NULL
+for(i in 1:nrow(fe1)){
+  text <- paste(text, "insert into tbl_values values (",
+                fe1[i,1],",",
+                fe1[i,2],",",
+                fe1[i,3],",",
+                fe1[i,4],",",
+                fe1[i,5],");\n",sep="")
+}
+fileConn<-file("export_regions_fuel_ethanol.sql")
+writeLines(text, fileConn)
+close(fileConn)
+```
